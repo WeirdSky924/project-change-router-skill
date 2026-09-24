@@ -94,6 +94,25 @@ def test_route_decision_persists_normalized_changed_paths(tmp_path: Path) -> Non
     assert decision.to_dict()["changed_paths"] == ["services/payments/service.py"]
 
 
+def test_route_authorization_envelope_uses_only_explicit_changed_path(
+    tmp_path: Path,
+) -> None:
+    repo = _profiled_repo(tmp_path)
+    bundle = router_core.bootstrap_bundle(repo, write=True)
+    decision = router_core.resolve_request(
+        "Extend the existing payment charge behavior.",
+        ["services\\payments\\service.py"],
+        bundle,
+        repo / "project-change-router",
+        enforce_evaluation_policy=False,
+        freshness_context="route",
+    )
+
+    assert decision.authorization_request["mutation_envelope"][
+        "allowed_write_paths"
+    ] == ["services/payments/service.py"]
+
+
 def test_route_schema_requires_changed_paths() -> None:
     path = SKILL_ROOT / "schemas" / "route-decision-report.schema.json"
     schema = json.loads(path.read_text(encoding="utf-8"))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 import pytest
 
@@ -184,3 +185,41 @@ def test_repromotion_preserves_superseded_baseline_history(tmp_path) -> None:
     )
     assert historical["state"] == "superseded"
     assert historical["superseded_by"] == second["snapshot_fingerprint"]
+
+
+def test_trusted_baseline_can_compare_changed_content_without_reusing_old_pass(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "source.py").write_text("VALUE = 1\n")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repo), "-c", "user.name=Test", "-c",
+                    "user.email=test@example.invalid", "commit", "-qm", "initial"], check=True)
+    head = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip()
+    store = EvidenceBaselineStore(tmp_path / "runtime")
+    binding = _binding(commit=head)
+    candidate = store.record_candidate(repo_id="repo", binding=binding, findings=[_finding()],
+                                        clean_worktree=True, evidence_complete=True)
+    store.promote(candidate["snapshot_fingerprint"], authority="user:accepted")
+    current = _binding(commit=head, structure_digest="0" * 64)
+    assert store.load_trusted("repo", current) is None
+    comparison = store.load_comparison("repo", current, repo_root=repo)
+    assert comparison is not None
+    assert classify_against_baseline([_finding(1500)], comparison)[0].delta_state == "task_local_expanded"
+    assert store.load_comparison("repo", {**current, "policy_version": "99"}, repo_root=repo) is None
+    assert store.load_comparison("repo", {**current, "commit": "a" * 40}, repo_root=repo) is None
+
+
+@pytest.mark.parametrize("field,value", [("repo_id", "other"), ("clean_worktree", False),
+                                       ("evidence_complete", False), ("promotion_authority", ""),
+                                       ("findings", [])])
+def test_trusted_load_rejects_damaged_baseline(tmp_path, field, value):
+    store = EvidenceBaselineStore(tmp_path)
+    candidate = store.record_candidate(repo_id="repo", binding=_binding(), findings=[_finding()],
+                                       clean_worktree=True, evidence_complete=True)
+    store.promote(candidate["snapshot_fingerprint"], authority="user:accepted")
+    path = tmp_path / "baselines/repo.json"
+    damaged = json.loads(path.read_text())
+    damaged[field] = value
+    path.write_text(json.dumps(damaged))
+    assert store.load_trusted("repo", _binding()) is None

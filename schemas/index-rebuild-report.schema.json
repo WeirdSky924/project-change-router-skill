@@ -16,6 +16,8 @@
     },
     "structure_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "indexed_paths": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "snapshot_schema_version": { "type": "integer", "minimum": 1 },
+    "file_records": { "type": "array", "items": { "type": "object", "required": ["path", "content_digest", "executable"], "properties": { "path": { "type": "string" }, "content_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "executable": { "type": "boolean" } }, "additionalProperties": false } },
     "mapped_path_patterns": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
     "diagnostics": { "type": "array", "items": { "type": "string" } },
     "generated_modules_count": { "type": "integer" },

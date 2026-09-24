@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from router_support.typed_findings import digest_value
+from router_support.task_evidence.inputs import repository_input_paths, reuse_cache_input
+from router_support.task_evidence.relations import build_path_relations
 
 
 PROFILE_NAMES = (
@@ -124,8 +126,12 @@ def _unversioned_source_paths(repo_root: Path) -> list[str]:
 
 
 def _path_record(repo_root: Path, path_text: str) -> dict[str, Any]:
-    normalized = path_text.replace("\\", "/").strip("/")
+    normalized = path_text.replace("\\", "/").removeprefix("./")
     target = repo_root / normalized
+    if Path(normalized).is_absolute() or ".." in Path(normalized).parts or not target.resolve().is_relative_to(repo_root):
+        raise ValueError("evidence input escapes repository")
+    if target.is_symlink() or any(parent.is_symlink() for parent in target.parents if repo_root in parent.parents):
+        return {"path": normalized, "state": "symlink"}
     if not target.exists():
         return {"path": normalized, "state": "deleted"}
     if target.is_dir():
@@ -208,7 +214,7 @@ def build_evidence_input(
     if head is None and not worktree_paths:
         worktree_paths = _unversioned_source_paths(repo)
     route_paths = sorted(
-        {str(path).replace("\\", "/").strip("/") for path in changed_paths if path}
+        {str(path).replace("\\", "/").removeprefix("./") for path in changed_paths if path}
     )
     global_paths = sorted(set(route_paths) | set(worktree_paths))
     global_records = [_path_record(repo, path) for path in global_paths]
@@ -224,6 +230,9 @@ def build_evidence_input(
             if capabilities_for_path(bundle, path) & closure
         }
     )
+    relations = build_path_relations(repo, route_paths, repository_input_paths(repo))
+    if relations["complete"]:
+        closure_paths = relations["closure_paths"]
     closure_records = [_path_record(repo, path) for path in closure_paths]
     route_records = [_path_record(repo, path) for path in route_paths]
     path_patterns = sorted(
@@ -245,6 +254,7 @@ def build_evidence_input(
         "worktree_paths": worktree_paths,
         "route_capability_seeds": sorted(seeds),
         "route_capability_closure": sorted(closure),
+        "path_relations": relations,
         "global_source_fingerprints": global_records,
         "global_source_fingerprint_digest": digest_value(global_records),
         "closure_source_fingerprints": closure_records,
@@ -271,8 +281,9 @@ def build_evidence_input(
     )
     evidence["closure_input_digest"] = digest_value(
         {
-            **common,
+            **{key: value for key, value in common.items() if key != "structure_digest"},
             "route_capability_closure": sorted(closure),
+            "relations_complete": relations["complete"],
             "source_fingerprints": closure_records,
         }
     )
@@ -280,6 +291,7 @@ def build_evidence_input(
         {**common, "source_fingerprints": route_records}
     )
     evidence["input_digest"] = evidence["closure_input_digest"]
+    evidence["reuse_input_digest"] = reuse_cache_input(repo, common, route_paths)
     return evidence
 
 

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-change-router.dev/schemas/working-index.schema.json",
+  "type": "object",
+  "required": ["schema_version", "task_id", "state", "source_observation_id", "paths", "assignments", "unknown_paths", "conflict_paths", "baseline_eligible", "write_authority", "record_id"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "task_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$" },
+    "state": { "const": "observation_only" },
+    "repo_root": { "type": "string" },
+    "source_observation_id": { "type": "string", "minLength": 1 },
+    "paths": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "assignments": { "type": "object", "additionalProperties": { "type": "string" } },
+    "unknown_paths": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "conflict_paths": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "owner_patterns_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "baseline_eligible": { "const": false },
+    "write_authority": { "const": "none" },
+    "record_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  },
+  "additionalProperties": false
+}

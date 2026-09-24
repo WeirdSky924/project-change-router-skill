@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import os
+import subprocess
 import uuid
 from pathlib import Path
 from typing import Any, Iterable, Mapping
@@ -137,12 +138,8 @@ class EvidenceBaselineStore:
         self, repo_id: str, binding: Mapping[str, str]
     ) -> dict[str, Any] | None:
         current_binding = baseline_binding(**dict(binding))
-        baseline_name = self._baseline_name(repo_id, current_binding)
-        path = self.baselines_root / f"{baseline_name}.json"
-        if not path.is_file():
-            return None
-        baseline = json.loads(path.read_text(encoding="utf-8"))
-        if baseline.get("state") != "trusted_baseline":
+        baseline = self._load_validated(repo_id, current_binding)
+        if baseline is None:
             return None
         persisted_binding = baseline.get("binding", {})
         identity_fields = [
@@ -154,6 +151,62 @@ class EvidenceBaselineStore:
         ):
             return None
         return baseline
+
+    def _load_validated(self, repo_id: str, binding: Mapping[str, str]) -> dict[str, Any] | None:
+        path = self.baselines_root / f"{self._baseline_name(repo_id, binding)}.json"
+        if not path.is_file() or path.is_symlink():
+            return None
+        try:
+            baseline = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(baseline, dict) or (
+                baseline.get("schema_version") != BASELINE_SCHEMA_VERSION
+                or baseline.get("repo_id") != repo_id
+                or baseline.get("state") != "trusted_baseline"
+                or baseline.get("clean_worktree") is not True
+                or baseline.get("evidence_complete") is not True
+                or not baseline.get("promotion_authority")
+            ):
+                return None
+            baseline_binding(**baseline["binding"])
+            identity = {key: baseline[key] for key in (
+                "repo_id", "binding", "findings", "clean_worktree", "evidence_complete", "source")}
+            if baseline.get("snapshot_fingerprint") != digest_value(identity):
+                return None
+            if not isinstance(baseline["findings"], list):
+                return None
+            for finding in baseline["findings"]:
+                TypedFinding.from_dict(finding)
+            return baseline
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            return None
+
+    def load_comparison(
+        self, repo_id: str, binding: Mapping[str, str], *, repo_root: Path,
+    ) -> dict[str, Any] | None:
+        """Load trusted history for delta comparison, never as current pass evidence.
+
+        Content may change; policy, ownership/index knowledge and scope may not.
+        The full current checks still run before classification or gate reduction.
+        """
+        current = baseline_binding(**dict(binding))
+        baseline = self._load_validated(repo_id, current)
+        if baseline is None:
+            return None
+        try:
+            prior = baseline_binding(**baseline["binding"])
+            stable = set(BASELINE_BINDING_FIELDS) - {"commit", "structure_digest", "evidence_digest"}
+            if any(prior[key] != current[key] for key in stable):
+                return None
+            for commit in (prior["commit"], current["commit"]):
+                if not commit or any(c not in "0123456789abcdef" for c in commit) or len(commit) not in {40, 64}:
+                    return None
+            result = subprocess.run(["git", "-C", str(repo_root), "merge-base", "--is-ancestor",
+                                     prior["commit"], current["commit"]], capture_output=True, timeout=15)
+            if result.returncode != 0:
+                return None
+            return baseline
+        except (OSError, ValueError, TypeError, KeyError, subprocess.SubprocessError):
+            return None
 
 
 def _numeric_delta(current: Mapping[str, Any], prior: Mapping[str, Any]) -> str:

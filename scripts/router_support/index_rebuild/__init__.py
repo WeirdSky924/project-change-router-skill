@@ -129,6 +129,8 @@ def rebuild_router_index(
         "source_commit": snapshot.source_commit,
         "structure_digest": snapshot.digest,
         "indexed_paths": list(snapshot.paths),
+        "snapshot_schema_version": 2,
+        "file_records": list(snapshot.file_records),
         "mapped_path_patterns": mapped_path_patterns,
         "diagnostics": list(snapshot.diagnostics),
         "generated_modules_count": len(new_modules),

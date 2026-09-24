@@ -169,9 +169,9 @@ See [references/governance-outputs.md](./references/governance-outputs.md) for t
 
 ![Integrated route contract](./assets/readme-route-contract.svg)
 
-### 0.4 Execution Gate and Evidence Model
+### 0.5 Execution Gate and Task-Aware Evidence Model
 
-PCR 0.4 separates routing advice from write authority:
+PCR 0.5 preserves the 0.4 separation between routing advice and write authority and adds task-aware evidence:
 
 | Field | Meaning |
 | --- | --- |
@@ -304,10 +304,10 @@ python <new-skill-root>\scripts\run_change_flow.py --repo <existing-repo> --requ
 Compatibility guarantees:
 
 - The new skill continues to read bundle schema v1.
-- Version 0.4 uses architecture governance API v2 plus typed-finding, gate, change-flow, and authorization API v1 while preserving reuse engine API v2.
+- Version 0.5 preserves architecture governance API v2 plus typed-finding, gate, change-flow, authorization API v1, and reuse engine API v2 while adding layered freshness, external task observations, working-index events, and directed relation evidence.
 - Every current report carries one `runtime_identity` binding skill version, Git commit when available, installed payload digest, and schema/API/policy/parser versions. Cache, baseline, finding, authorization, and artifact identity all bind to it.
 - New evaluation fields in schema v1 remain optional. Safe runtime defaults are read in memory and are not written back to old YAML during compatibility checks; missing or disabled evaluation enforcement remains `review_only` rather than granting write authority.
-- When schema v1 cannot supply the precision required for typed findings, relevance closure, or a trusted baseline, 0.4 emits `unknown` and keeps the execution gate blocked. It does not fabricate precision or write new fields into the old bundle.
+- When schema v1 cannot supply the precision required for typed findings, relevance closure, per-file freshness, or a trusted baseline, 0.5 emits `unknown` and keeps the execution gate blocked. It does not fabricate precision or write new fields into the old bundle.
 - `normal` requires at least 30 real cases named by `curated_case_ids`, the complete six-category calibration matrix, explicit capability expectations, and a valid attestation. Thresholds may only be tightened; generated or legacy cases without provenance remain `review_only`.
 - If an old bundle lacks `reuse_scan_scope`, `reuse_scan_runtime`, or `reuse_scan_retention`, code defaults apply without writing those defaults back to YAML.
 - New fingerprints, checkpoints, canonical reports, diagnostics, flow artifacts, baselines, and authorization manifests live in the user cache by default. They do not modify the target repository or require a new `.gitignore` entry.
@@ -511,7 +511,7 @@ Upgrading the skill does not require an automatic bundle refresh. Use [examples/
 
 ## Architecture Governance
 
-PCR 0.4 adds typed findings, incremental global evidence, trusted baselines, and an authoritative execution gate to the existing regression guardrails:
+PCR 0.5 retains typed findings, incremental global evidence, trusted baselines, and an authoritative execution gate, adding task-aware freshness, working-index observations, and relation closures:
 
 - The Python and TypeScript/JavaScript import graph separates runtime from type-only edges and reports runtime cycles, resolver diagnostics, and dependency direction.
 - `architecture_baseline` records exact existing debt. Registered debt can remain visible without blocking, while new findings or net growth fail. It is never a wildcard exemption.

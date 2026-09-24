@@ -23,6 +23,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--comparison-commit", help="Trusted comparison commit.")
     parser.add_argument("--runtime-dir", help="External PCR runtime directory.")
+    parser.add_argument("--task-id", help="Stable task observation identity; not an authorization.")
+    parser.add_argument("--start-task", action="store_true", help="Record a new immutable task observation; never resets an existing task.")
     parser.add_argument(
         "--timeout-seconds", type=float, default=60.0, help="Per-check timeout."
     )
@@ -59,6 +61,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("either --request or --request-file is required")
     if args.timeout_seconds <= 0:
         parser.error("--timeout-seconds must be positive")
+    if args.start_task and not args.task_id:
+        parser.error("--start-task requires --task-id")
     return args
 
 
@@ -78,6 +82,8 @@ def main() -> int:
         timeout_seconds=args.timeout_seconds,
         accept_baseline=args.accept_baseline,
         ci_baseline=args.ci_baseline,
+        task_id=args.task_id,
+        start_task=args.start_task,
     )
     if args.format == "full-json":
         output = report

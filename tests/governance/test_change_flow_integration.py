@@ -69,3 +69,20 @@ def test_change_flow_persists_full_artifact_and_warm_cache(tmp_path: Path) -> No
     assert second["cache_summary"]["hits"] == 6
     assert second["incremental_summary"]["reused_node_count"] > 0
     assert second["authorization_request"]["state"] == "requested"
+    assert second["authorization_request"]["context"]["mutation_envelope"][
+        "allowed_write_paths"
+    ] == ["app/service.py"]
+
+
+def test_flow_keeps_unindexed_source_delta_conservative_and_seed_owner_stop(tmp_path):
+    repo = _repo(tmp_path)
+    router_core.rebuild_index(repo, write_back=True)
+    (repo / "app/service.py").write_text("def execute():\n    return 'changed'\n", encoding="utf-8")
+    report = run_change_flow(repo_root=repo, request_text="Extend the existing service result.",
+        changed_paths=["app/service.py"], runtime_dir=str(tmp_path / "runtime"), timeout_seconds=20)
+    assert report["checks"]["freshness"]["status"] == "fail"
+    assert report["freshness_reconciliation"]["state"] == "conservative"
+    assert any(f["type"] == "freshness_delta" for f in report["typed_findings"])
+    assert any(f["type"] == "owner_unknown" for f in report["typed_findings"])
+    assert report["execution_gate"]["state"] == "blocked"
+    assert report["baseline"]["promoted"] is None

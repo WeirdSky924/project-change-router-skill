@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Mapping
 
+from router_support.route_constraints import glob_match
 from router_support.typed_findings import digest_value
 
 
@@ -62,6 +63,41 @@ def _safe_paths(values: object) -> list[str]:
         if path not in normalized:
             normalized.append(path)
     return normalized
+
+
+def _normalized_new_paths(values: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for path in _safe_paths(values):
+        while path.startswith("./"):
+            path = path[2:]
+        path = path.rstrip("/")
+        if path and path not in normalized:
+            normalized.append(path)
+    return normalized
+
+
+def build_authorization_mutation_envelope(
+    changed_paths: list[str],
+    proposed_allowed_paths: list[str],
+    proposed_forbidden_paths: list[str],
+) -> dict[str, list[str]]:
+    """Narrow a new authorization envelope to explicit changed paths."""
+
+    paths = _normalized_new_paths(changed_paths)
+    allowed_patterns = _normalized_new_paths(proposed_allowed_paths)
+    forbidden_patterns = _normalized_new_paths(proposed_forbidden_paths)
+    if any(marker in path for path in paths for marker in "*?["):
+        paths = []
+    allowed = [
+        path
+        for path in paths
+        if glob_match(allowed_patterns, path)
+        and not glob_match(forbidden_patterns, path)
+    ]
+    return {
+        "allowed_write_paths": allowed,
+        "forbidden_write_paths": forbidden_patterns,
+    }
 
 
 def normalize_authorization_context(value: Mapping[str, Any]) -> dict[str, Any]:

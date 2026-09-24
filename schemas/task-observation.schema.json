@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-change-router.dev/schemas/task-observation.schema.json",
+  "type": "object",
+  "required": ["schema_version", "task_id", "state", "baseline_eligible", "authorization", "repo_root", "head", "records", "changed_paths", "observation_id"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "task_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,95}$" },
+    "state": { "const": "observation_only" },
+    "baseline_eligible": { "const": false },
+    "authorization": { "const": "none" },
+    "created_at": { "type": "string" },
+    "binding": { "type": "object" },
+    "repo_root": { "type": "string", "minLength": 1 },
+    "head": { "type": "string", "minLength": 1 },
+    "records": { "type": "object", "additionalProperties": { "type": "object" } },
+    "changed_paths": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+    "diagnostics": { "type": "array", "items": { "type": "string" } },
+    "observation_id": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  },
+  "additionalProperties": false
+}

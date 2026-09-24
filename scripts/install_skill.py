@@ -83,6 +83,8 @@ def install_manifest(skill_root: Path) -> dict[str, object]:
         "schemas/change-flow-report.schema.json",
         "schemas/runtime-identity.schema.json",
         "schemas/precise-read-targets.schema.json",
+        "schemas/task-observation.schema.json",
+        "schemas/working-index.schema.json",
         "scripts/router_support/schema_validation.py",
     )
     for relative in required:
@@ -186,6 +188,7 @@ from router_support import route_authorization
 from router_support import typed_findings
 from router_support import execution_gate
 from router_support import runtime_identity
+from router_support.task_evidence import observation, working_index, inputs, relations
 from router_support import schema_validation
 from router_support import structure_guardrails
 assert callable(router_core.gather_reuse_report)

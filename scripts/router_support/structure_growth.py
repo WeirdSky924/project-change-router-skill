@@ -16,6 +16,7 @@ CODE_SUFFIXES = {
 NON_CODE_JSON_PREFIXES = (
     "audit/reports/",
     "audit/state/",
+    "schemas/",
     "project-change-router/reports/",
 )
 NON_CODE_JSON_NAMES = {".refactor_progress.json"}
@@ -361,6 +362,7 @@ def _current_code_paths(repo_root: Path) -> set[str]:
         if (normalized := _normalize_repo_path(raw_path))
         and (repo_root / normalized).is_file()
         and _is_governed_code_bearing_path(normalized, repo_root / normalized)
+        and not normalized.startswith("project-change-router/schemas/")
     }
 
 
@@ -377,6 +379,8 @@ def _baseline_code_paths(repo_root: Path, comparison_commit: str) -> set[str]:
         if not separator:
             raise RuntimeError(f"malformed git tree record {record!r}")
         normalized = _normalize_repo_path(raw_path)
+        if normalized.startswith("project-change-router/schemas/"):
+            continue
         mode = metadata.split(" ", 1)[0]
         is_code_bearing = bool(
             normalized

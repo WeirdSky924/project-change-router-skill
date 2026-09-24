@@ -31,6 +31,7 @@ from router_support.java_source_scan import java_imports
 from router_support.freshness_checks import (
     build_structure_snapshot,
     repository_freshness_report,
+    route_freshness_assessment as _route_freshness_assessment,
 )
 from router_support.generated_output_baseline import (
     validate_generated_output_rules,
@@ -61,6 +62,7 @@ from router_support.repository_surfaces import (
 from router_support.ownership_governance import (
     build_ownership, capability_conflicts, codeowner_for_module, load_codeowners,
 )
+from router_support.authorization_manifest import build_authorization_mutation_envelope
 from router_support.route_capability_contracts import (
     compare_capability_contract,
     ordered_secondary_capabilities,
@@ -3709,164 +3711,6 @@ def forbidden_paths_for(capability: Optional[CapabilityEntry], bundle: dict[str,
     return list(dict.fromkeys(capability.forbidden_patterns))
 
 
-def _capability_dependency_closure(
-    bundle: dict[str, Any],
-    seed_capabilities: set[str],
-) -> set[str]:
-    if not seed_capabilities:
-        return set()
-    modules = module_entries(bundle)
-    capabilities = capability_entries(bundle)
-    capabilities_by_module: dict[str, set[str]] = {}
-    for capability in capabilities:
-        for owner_module in capability.owner_modules:
-            capabilities_by_module.setdefault(owner_module, set()).add(capability.id)
-
-    graph: dict[str, set[str]] = {
-        capability.id: set() for capability in capabilities
-    }
-    for module in modules:
-        source_capabilities = capabilities_by_module.get(module.path, set())
-        for dependency in module.depends_on:
-            target_module = module_for_path(dependency, modules)
-            if target_module is None:
-                continue
-            target_capabilities = capabilities_by_module.get(target_module.path, set())
-            for source_capability in source_capabilities:
-                graph.setdefault(source_capability, set()).update(target_capabilities)
-            for target_capability in target_capabilities:
-                graph.setdefault(target_capability, set()).update(source_capabilities)
-    for entry in bundle.get("path_to_capability_map", {}).get("path_index", []):
-        owners = {
-            str(value) for value in entry.get("capabilities", []) if value
-        }
-        consumers = {
-            str(value) for value in entry.get("consumer_capabilities", []) if value
-        }
-        for capability in owners | consumers:
-            graph.setdefault(capability, set()).update((owners | consumers) - {capability})
-
-    closure = set(seed_capabilities)
-    pending = list(seed_capabilities)
-    while pending:
-        current = pending.pop()
-        for neighbor in graph.get(current, set()):
-            if neighbor not in closure:
-                closure.add(neighbor)
-                pending.append(neighbor)
-    return closure
-
-
-def _freshness_check_details(
-    report: dict[str, Any],
-    check_name: str,
-) -> dict[str, Any]:
-    for check in report.get("checks", []):
-        if check.get("name") == check_name:
-            details = check.get("details", {})
-            return dict(details) if isinstance(details, dict) else {}
-    return {}
-
-
-def _route_freshness_assessment(
-    bundle: dict[str, Any],
-    report: dict[str, Any],
-    route_paths: list[str],
-) -> dict[str, Any]:
-    normalized_routes = {
-        path.replace("\\", "/").strip("/") for path in route_paths if path
-    }
-    route_capabilities = {
-        capability
-        for path in normalized_routes
-        for capability in path_index_evidence_capabilities_for_path(bundle, path)
-    }
-    relevant_capabilities = _capability_dependency_closure(
-        bundle, route_capabilities
-    )
-    repository_paths = {
-        str(path).replace("\\", "/").strip("/")
-        for path in report.get("repository_changed_paths", [])
-        if path
-    }
-    indexed_details = _freshness_check_details(report, "indexed_paths")
-    repository_paths.update(
-        str(path).replace("\\", "/").strip("/")
-        for key in ("missing_from_index", "stale_in_index")
-        for path in indexed_details.get(key, [])
-        if path
-    )
-
-    relevant_paths: list[str] = []
-    unrelated_paths: list[str] = []
-    unknown_paths: list[str] = []
-    for path in sorted(repository_paths):
-        path_capabilities = set(
-            path_index_evidence_capabilities_for_path(bundle, path)
-        )
-        if not path_capabilities:
-            unknown_paths.append(path)
-        elif path_capabilities & relevant_capabilities:
-            relevant_paths.append(path)
-        else:
-            unrelated_paths.append(path)
-
-    route_unmapped = sorted(
-        path
-        for path in normalized_routes
-        if not path_index_evidence_capabilities_for_path(bundle, path)
-    )
-    for path in route_unmapped:
-        if path not in unknown_paths:
-            unknown_paths.append(path)
-    failure_reasons = set(report.get("failure_reasons", []))
-    localizable_failures = {
-        "source_commit",
-        "structure_digest",
-        "indexed_paths",
-    }
-    if report.get("status") != "fail":
-        classification = "baseline_unchanged"
-        route_status = "pass"
-        reasons = ["global freshness evidence is current"]
-    elif relevant_paths:
-        classification = "task_local_new"
-        route_status = "fail"
-        reasons = ["freshness delta intersects the routed capability closure"]
-    elif unknown_paths:
-        classification = "unknown"
-        route_status = "fail"
-        reasons = ["freshness delta contains paths with unresolved capability relevance"]
-    elif (
-        repository_paths
-        and failure_reasons <= localizable_failures
-        and (
-            "source_commit" not in failure_reasons
-            or report.get("comparison_delta_complete") is True
-        )
-    ):
-        classification = "baseline_unchanged"
-        route_status = "pass"
-        reasons = ["global freshness debt is proven outside the routed capability closure"]
-    else:
-        classification = "unknown"
-        route_status = "fail"
-        reasons = ["global freshness failure cannot be localized safely"]
-    return {
-        "status": route_status,
-        "classification": classification,
-        "blocking": route_status == "fail",
-        "route_paths": sorted(normalized_routes),
-        "route_capabilities": sorted(route_capabilities),
-        "relevant_capabilities": sorted(relevant_capabilities),
-        "relevant_changed_paths": relevant_paths,
-        "unrelated_changed_paths": unrelated_paths,
-        "unknown_changed_paths": sorted(unknown_paths),
-        "global_failure_reasons": sorted(failure_reasons),
-        "reasons": reasons,
-    }
-
-
 def _resolution_freshness(
     bundle_root: Path,
     bundle: dict[str, Any],
@@ -3889,7 +3733,8 @@ def _resolution_freshness(
     report = freshness_report(bundle_root.parent, routed_bundle, changed_paths)
     report["context"] = "route"
     route_assessment = _route_freshness_assessment(
-        bundle, report, changed_paths
+        bundle, report, changed_paths,
+        path_capabilities=path_index_evidence_capabilities_for_path,
     )
     report["route_assessment"] = route_assessment
     report["route_status"] = route_assessment["status"]
@@ -5257,14 +5102,11 @@ def resolve_request(
             "owner": owner_record.get("primary"),
             "canonical_root": canonical_root,
             "route": action,
-            "mutation_envelope": {
-                "allowed_write_paths": list(
-                    execution_gate.get("proposed_allowed_write_paths", [])
-                ),
-                "forbidden_write_paths": list(
-                    execution_gate.get("proposed_forbidden_write_paths", [])
-                ),
-            },
+            "mutation_envelope": build_authorization_mutation_envelope(
+                normalized_changed_paths,
+                list(execution_gate.get("proposed_allowed_write_paths", [])),
+                list(execution_gate.get("proposed_forbidden_write_paths", [])),
+            ),
         }
         authorization_request["request_fingerprint"] = digest_value(
             authorization_request

@@ -169,9 +169,9 @@ route report 不是只给一个 action。它是一个完整路由契约，核心
 
 ![Integrated route contract](./assets/readme-route-contract.svg)
 
-### 0.4 执行门禁与证据模型
+### 0.5 执行门禁与任务感知证据模型
 
-PCR 0.4 把“路由建议”和“是否可写”彻底拆开：
+PCR 0.5 在 0.4 的基础上把“路由建议”和“是否可写”彻底拆开，并加入任务感知证据：
 
 | 字段 | 作用 |
 | --- | --- |
@@ -304,10 +304,10 @@ python <new-skill-root>\scripts\run_change_flow.py --repo <existing-repo> --requ
 兼容保证：
 
 - 新版本继续读取 schema v1 bundle。
-- 0.4 使用架构治理 API v2、typed finding / gate / change flow / authorization API v1，并保持 reuse engine API v2。
+- 0.5 保持架构治理 API v2、typed finding / gate / change flow / authorization API v1 和 reuse engine API v2 可兼容，同时加入分层 freshness、外部 task observation、working-index events 和 directed relation evidence。
 - 所有新版报告带统一 `runtime_identity`，绑定 skill version、Git commit（可用时）、安装载荷摘要、schema/API/policy/parser 版本。缓存、baseline、finding、授权与 artifact 都绑定该身份。
 - schema v1 的新增 evaluation 字段保持 optional；runtime 使用安全默认值且不写回旧 YAML，缺少或显式关闭 evaluation enforcement 都保持 `review_only`，不能授予写入权限。
-- schema v1 无法提供 typed finding、relevance closure 或 trusted baseline 所需精度时，0.4 输出 `unknown` 并让 execution gate 保持 blocked；它不会伪造精确度，也不会把新字段写回旧 bundle。
+- schema v1 无法提供 typed finding、relevance closure、per-file freshness 或 trusted baseline 所需精度时，0.5 输出 `unknown` 并让 execution gate 保持 blocked；它不会伪造精确度，也不会把新字段写回旧 bundle。
 - `normal` 只接受至少 30 个带 `curated_case_ids` 的真实案例、完整六类校准矩阵、明确 capability 期望以及合法 attestation；阈值只能收紧，生成案例和缺少 provenance 的旧案例始终保持 `review_only`。
 - 旧 bundle 没有 `reuse_scan_scope`、`reuse_scan_runtime` 或 `reuse_scan_retention` 时，代码使用新默认值，但不会写回或改动 YAML。
 - 新 fingerprint、checkpoint、canonical、diagnostic、flow artifact、baseline 和 authorization manifest 默认写到用户缓存目录，不写入目标仓库，也不要求修改目标仓库 `.gitignore`。
@@ -511,7 +511,7 @@ Keep full diagnostics in the content-addressed artifact. In the main context ret
 
 ## 架构治理
 
-PCR 0.4 在原有可回归 guardrail 上增加 typed findings、增量全局证据、可信 baseline 和权威 execution gate：
+PCR 0.5 在原有可回归 guardrail 上保留 typed findings、增量全局证据、可信 baseline 和权威 execution gate，并增加任务感知 freshness、working-index 和关系闭包：
 
 - Python 和 TypeScript/JavaScript import graph 区分 runtime 与 type-only edge，并报告 runtime cycle、解析诊断和依赖方向。
 - `architecture_baseline` 只登记精确旧债；已登记问题可以告警，新问题或净增长失败。它不是 wildcard 豁免。

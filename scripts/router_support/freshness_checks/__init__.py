@@ -16,6 +16,7 @@ from router_support.structure_growth import (
     git_commit_is_ancestor,
     resolve_git_commit,
 )
+from router_support.freshness_checks.layers import classify_freshness_layers, compare_snapshot_records
 
 
 STRUCTURE_SUFFIXES = {
@@ -62,6 +63,7 @@ class StructureSnapshot:
     paths: tuple[str, ...]
     diagnostics: tuple[str, ...]
     ignored_patterns: tuple[str, ...] = ()
+    file_records: tuple[Mapping[str, object], ...] = ()
 
 
 def _normalized(path: str) -> str:
@@ -145,6 +147,7 @@ def build_structure_snapshot(
     required = tuple(str(pattern) for pattern in required_patterns)
     digest = hashlib.sha256()
     included: list[str] = []
+    file_records: list[Mapping[str, object]] = []
     diagnostics = list(scan_diagnostics)
     if commit_error:
         diagnostics.append(f"git-rev-parse-error:{commit_error}")
@@ -173,6 +176,9 @@ def build_structure_snapshot(
         if _matches(rel_path, user_ignored) and not _matches(rel_path, required):
             continue
         path = root / rel_path
+        if path.is_symlink() or not path.resolve().is_relative_to(root):
+            diagnostics.append(f"unsafe-symlink:{rel_path}")
+            continue
         if not path.is_file():
             continue
         try:
@@ -181,6 +187,8 @@ def build_structure_snapshot(
             diagnostics.append(f"read-error:{rel_path}:{exc}")
             continue
         included.append(rel_path)
+        file_records.append({"path": rel_path, "content_digest": hashlib.sha256(content).hexdigest(),
+                             "executable": bool(path.stat().st_mode & 0o111)})
         digest.update(rel_path.encode("utf-8"))
         digest.update(b"\0")
         digest.update(content)
@@ -191,6 +199,7 @@ def build_structure_snapshot(
         paths=tuple(included),
         diagnostics=tuple(sorted(diagnostics)),
         ignored_patterns=user_ignored,
+        file_records=tuple(file_records),
     )
 
 
@@ -469,6 +478,102 @@ def canonical_bundle_system_paths(
     )
 
 
+def route_freshness_assessment(
+    bundle: Mapping[str, Any], report: Mapping[str, Any], route_paths: Iterable[str],
+    *, path_capabilities: Any = None,
+) -> dict[str, Any]:
+    """Classify freshness deltas against a capability closure without granting writes."""
+    import fnmatch
+
+    def capabilities_for(path: str) -> set[str]:
+        if path_capabilities is not None:
+            return set(path_capabilities(bundle, path))
+        matches: list[tuple[int, set[str]]] = []
+        for entry in bundle.get("path_to_capability_map", {}).get("path_index", []):
+            pattern = str(entry.get("path_pattern", "")).replace("\\", "/")
+            if pattern and fnmatch.fnmatchcase(path, pattern):
+                values = {str(v) for key in ("capabilities", "consumer_capabilities")
+                          for v in entry.get(key, []) if v}
+                matches.append((len(pattern), values))
+        if not matches:
+            return set()
+        most_specific = max(score for score, _ in matches)
+        result: set[str] = set()
+        for score, values in matches:
+            if score == most_specific:
+                result.update(values)
+        return result
+
+    seeds = {capability for path in route_paths for capability in capabilities_for(str(path))}
+    graph: dict[str, set[str]] = {}
+    catalog = bundle.get("capability_catalog", {}).get("capabilities", [])
+    owners: dict[str, set[str]] = {}
+    for capability in catalog:
+        identifier = str(capability.get("id", ""))
+        if identifier:
+            graph.setdefault(identifier, set())
+            for module in capability.get("owner_modules", []):
+                owners.setdefault(str(module), set()).add(identifier)
+    modules = bundle.get("module_map", {}).get("modules", [])
+    for module in modules:
+        source = owners.get(str(module.get("path", "")), set())
+        for dependency in module.get("depends_on", []):
+            targets = {value for key, values in owners.items() if str(dependency).startswith(key) for value in values}
+            for left in source:
+                graph.setdefault(left, set()).update(targets)
+            for right in targets:
+                graph.setdefault(right, set()).update(source)
+    for entry in bundle.get("path_to_capability_map", {}).get("path_index", []):
+        values = {str(v) for key in ("capabilities", "consumer_capabilities") for v in entry.get(key, []) if v}
+        for value in values:
+            graph.setdefault(value, set()).update(values - {value})
+    closure = set(seeds)
+    pending = list(seeds)
+    while pending:
+        current = pending.pop()
+        for neighbor in graph.get(current, set()):
+            if neighbor not in closure:
+                closure.add(neighbor)
+                pending.append(neighbor)
+
+    normalized_routes = {str(path).replace("\\", "/").strip("/") for path in route_paths if path}
+    repository_paths = {str(path).replace("\\", "/").strip("/") for path in report.get("repository_changed_paths", []) if path}
+    indexed_details = next((item.get("details", {}) for item in report.get("checks", [])
+                            if item.get("name") == "indexed_paths"), {})
+    repository_paths.update(str(path).replace("\\", "/").strip("/")
+                            for key in ("missing_from_index", "stale_in_index")
+                            for path in indexed_details.get(key, []))
+    relevant, unrelated, unknown = [], [], []
+    for path in sorted(repository_paths):
+        matched = capabilities_for(path)
+        if not matched:
+            unknown.append(path)
+        elif matched & closure:
+            relevant.append(path)
+        else:
+            unrelated.append(path)
+    for path in sorted(normalized_routes):
+        if not capabilities_for(path) and path not in unknown:
+            unknown.append(path)
+    failures = set(report.get("failure_reasons", []))
+    localizable = {"source_commit", "structure_digest", "indexed_paths"}
+    if report.get("status") != "fail":
+        classification, status, reasons = "baseline_unchanged", "pass", ["global freshness evidence is current"]
+    elif relevant:
+        classification, status, reasons = "task_local_new", "fail", ["freshness delta intersects the routed capability closure"]
+    elif unknown:
+        classification, status, reasons = "unknown", "fail", ["freshness delta contains paths with unresolved capability relevance"]
+    elif repository_paths and failures <= localizable and ("source_commit" not in failures or report.get("comparison_delta_complete") is True):
+        classification, status, reasons = "baseline_unchanged", "pass", ["global freshness debt is proven outside the routed capability closure"]
+    else:
+        classification, status, reasons = "unknown", "fail", ["global freshness failure cannot be localized safely"]
+    return {"status": status, "classification": classification, "blocking": status == "fail",
+            "route_paths": sorted(normalized_routes), "route_capabilities": sorted(seeds),
+            "relevant_capabilities": sorted(closure), "relevant_changed_paths": relevant,
+            "unrelated_changed_paths": unrelated, "unknown_changed_paths": sorted(unknown),
+            "global_failure_reasons": sorted(failures), "reasons": reasons}
+
+
 def repository_freshness_report(
     repo_root: Path,
     bundle_root: Path,
@@ -551,4 +656,6 @@ def repository_freshness_report(
         "missing_references": [] if latest_path.exists() else [
             str(latest_path.relative_to(repo_root))
         ],
+        "layers": classify_freshness_layers(assessment, changed_paths=effective_changes),
+        "snapshot_delta": compare_snapshot_records(snapshot, indexed),
     }

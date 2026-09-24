@@ -7,7 +7,10 @@ from pathlib import Path
 
 from reuse_runtime import runtime_root_for_repo
 from router_core import route_bundle_from_repo
-from router_support.authorization_manifest import AuthorizationManifestStore
+from router_support.authorization_manifest import (
+    AuthorizationManifestStore,
+    build_authorization_mutation_envelope,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -70,14 +73,15 @@ def _context(document: dict) -> dict:
         "owner": request.get("owner", ""),
         "canonical_root": request.get("canonical_root", ""),
         "route": route.get("action", "review"),
-        "mutation_envelope": {
-            "allowed_write_paths": gate.get(
+        "mutation_envelope": build_authorization_mutation_envelope(
+            list(route.get("changed_paths", [])),
+            list(gate.get(
                 "proposed_allowed_write_paths", route.get("allowed_write_paths", [])
-            ),
-            "forbidden_write_paths": gate.get(
+            )),
+            list(gate.get(
                 "proposed_forbidden_write_paths", route.get("forbidden_write_paths", [])
-            ),
-        },
+            )),
+        ),
     }
 
 

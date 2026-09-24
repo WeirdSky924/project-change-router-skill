@@ -158,6 +158,6 @@ These overrides can define capability mappings, path-level ownership rules, expl
 - DeepSeek Harness is currently a developer preview. Revalidate the filesystem and provider contracts when upgrading Harness across preview releases.
 - It does not depend on a specific repository.
 - The repository-local router bundle is generated on demand and is not the skill itself.
-- Version 0.4 exposes architecture governance API v2, typed-finding/gate/change-flow/authorization API v1, and preserves reuse engine API v2.
+- Version 0.5 exposes the 0.4 architecture governance, typed-finding, gate, change-flow, authorization and reuse APIs with task-aware freshness, external observations, and conservative relation-aware evidence.
 - Every current report carries runtime identity: skill version, Git commit when available, installed payload digest/source, compatible bundle schemas, report/API/policy versions, parser versions, and an identity digest.
-- Updating the installed skill does not bootstrap, rebuild, or overwrite an existing repository-local bundle. Bundle schema v1 remains readable; missing 0.4 precision becomes `unknown` and blocks when required instead of being fabricated or written back. Runtime fingerprints, baselines, authorization manifests, and managed artifacts live outside the repository by default.
+- Updating the installed skill does not bootstrap, rebuild, or overwrite an existing repository-local bundle. Bundle schema v1 remains readable; missing 0.5 precision becomes `unknown` and blocks when required instead of being fabricated or written back. Runtime fingerprints, baselines, authorization manifests, task observations, working-index events, and managed artifacts live outside the repository by default.

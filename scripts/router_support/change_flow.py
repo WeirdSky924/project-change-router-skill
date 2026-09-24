@@ -11,20 +11,25 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from reuse_runtime import runtime_root_for_repo
-from router_support.authorization_manifest import AuthorizationManifestStore
+from router_support.authorization_manifest import (
+    AuthorizationManifestStore,
+    build_authorization_mutation_envelope,
+)
 from router_support.evidence_baseline import (
     EvidenceBaselineStore,
     baseline_binding,
     classify_against_baseline,
 )
 from router_support.execution_gate import reduce_execution_gate, shadow_gate_comparison
-from router_support.finding_adapters import adapt_check_report
+from router_support.route_evidence import merge_flow_findings, normalize_flow_evidence
 from router_support.incremental_evidence import (
     IncrementalEvidenceCache,
     build_evidence_input,
     update_incremental_snapshot,
 )
 from router_support.runtime_identity import runtime_identity
+from router_support.task_evidence.observation import TaskObservationStore
+from router_support.task_evidence.working_index import WorkingIndexStore
 from router_support.typed_findings import (
     TypedFinding,
     canonical_json,
@@ -57,6 +62,7 @@ DEFAULT_COMPACT_FIELDS = (
     "unresolved_read_targets",
     "authorization_request",
     "runtime_identity",
+    "task_observation",
 )
 
 
@@ -266,13 +272,16 @@ def _check_evidence(
     check_name: str,
     route_action: str,
     lifecycle_intent: bool,
+    *,
+    comparison_commit: str | None = None,
+    timeout_seconds: float = 60.0,
 ) -> dict[str, Any]:
     if check_name == "governance":
         scope = "governance"
         scoped_digest = evidence.get("governance_input_digest")
     elif check_name == "reuse":
-        scope = "closure"
-        scoped_digest = evidence.get("closure_input_digest")
+        scope = "reuse_candidates"
+        scoped_digest = evidence.get("reuse_input_digest", evidence.get("closure_input_digest"))
     else:
         scope = "global"
         scoped_digest = evidence.get("global_input_digest")
@@ -288,7 +297,12 @@ def _check_evidence(
         "check_name": check_name,
         "route_action": route_action if check_name == "reuse" else None,
         "lifecycle_intent": lifecycle_intent if check_name == "reuse" else None,
+        "comparison_commit": comparison_commit,
+        "timeout_seconds": timeout_seconds,
     }
+    if check_name == "reuse" and evidence.get("reuse_input_digest"):
+        value.pop("head", None)
+        value.pop("structure_digest", None)
     value["input_digest"] = digest_value(
         {key: item for key, item in value.items() if key != "input_digest"}
     )
@@ -319,6 +333,8 @@ def run_change_flow(
     timeout_seconds: float = 60.0,
     accept_baseline: str | None = None,
     ci_baseline: bool = False,
+    task_id: str | None = None,
+    start_task: bool = False,
 ) -> dict[str, Any]:
     from router_core import (
         build_route_report,
@@ -339,6 +355,32 @@ def run_change_flow(
     runtime = runtime_identity(_script_root())
     runtime_root = runtime_root_for_repo(repo, bundle, runtime_dir)
     runtime_root.mkdir(parents=True, exist_ok=True)
+    task_observation: dict[str, Any] = {}
+    working_index: dict[str, Any] = {}
+    if start_task and not task_id:
+        raise ValueError("start_task requires task_id")
+    if task_id:
+        observation_store = TaskObservationStore(runtime_root)
+        observation_binding = {"runtime_identity": runtime["identity_digest"]}
+        if start_task:
+            observation_store.start(task_id, repo, binding=observation_binding)
+        task_observation = observation_store.compare(task_id, repo, binding=observation_binding)
+        owner_patterns: dict[str, list[str]] = {}
+        for entry in bundle.get("path_to_capability_map", {}).get("path_index", []):
+            if not isinstance(entry, Mapping) or not entry.get("path_pattern"):
+                continue
+            for owner in entry.get("capabilities", []) or []:
+                owner_patterns.setdefault(str(owner), []).append(str(entry["path_pattern"]))
+        working_store = WorkingIndexStore(runtime_root)
+        working_index = working_store.observe(
+            task_id,
+            repo_root=repo,
+            paths=set(changed_paths)
+            | set(task_observation.get("changed_since_start", []))
+            | set(task_observation.get("preexisting_changed_paths", [])),
+            owner_patterns=owner_patterns,
+            source_observation_id=str(task_observation.get("current_observation_id", "")),
+        )
     structure_digest = str(
         route.get("authorization_context", {}).get("structure_digest") or "unknown"
     )
@@ -379,6 +421,8 @@ def run_change_flow(
             check_name,
             str(route.get("action", "review")),
             lifecycle_intent,
+            comparison_commit=comparison_commit,
+            timeout_seconds=timeout_seconds,
         )
         cached = cache.load(check_name, scoped_evidence)
         if cached is not None:
@@ -420,17 +464,12 @@ def run_change_flow(
             for path in capability.get(field, [])
             if path
         )
-    check_findings: list[TypedFinding] = []
-    for check_name, report in checks.items():
-        check_findings.extend(
-            adapt_check_report(
-                check_name,
-                report,
-                route_paths=changed_paths,
-                route_capabilities=closure_capabilities,
-                route_scope_paths=route_scope_paths,
-            )
-        )
+    normalized = normalize_flow_evidence(route_findings, checks,
+        route_paths=changed_paths, route_capabilities=closure_capabilities,
+        route_scope_paths=route_scope_paths, relations=evidence_input.get("path_relations", {}))
+    route_findings = normalized["route_findings"]
+    check_findings = normalized["check_findings"]
+    output_complete = normalized["output_complete"]
     raw_evidence_digest = findings_digest(check_findings)
     binding = baseline_binding(
         commit=str(evidence_input.get("head") or "uncommitted"),
@@ -444,7 +483,7 @@ def run_change_flow(
                 "capabilities": sorted(route_capabilities),
             }
         ),
-        tool_version=str(runtime["skill_version"]),
+        tool_version=str(runtime["identity_digest"]),
         policy_version=str(runtime["gate_policy_version"]),
         evidence_digest=raw_evidence_digest,
     )
@@ -458,31 +497,19 @@ def run_change_flow(
         route_capabilities=route_capabilities,
     )
     trusted = baseline_store.load_trusted(repo_id, binding)
+    comparison_baseline = trusted or baseline_store.load_comparison(repo_id, binding, repo_root=repo)
     classified_checks = classify_against_baseline(
         check_findings,
-        trusted,
-        evidence_complete=all(
-            report.get("completion_status", "complete") == "complete"
-            and report.get("evidence_complete", True) is not False
-            and not report.get("flow_error")
-            for report in checks.values()
-        ),
+        comparison_baseline,
+        evidence_complete=output_complete,
     )
-    all_findings = sorted(
-        [*route_findings, *classified_checks], key=lambda item: item.finding_id
-    )
-    output_complete = all(
-        report.get("completion_status", "complete") == "complete"
-        and report.get("evidence_complete", True) is not False
-        and not report.get("flow_error")
-        for report in checks.values()
-    )
+    all_findings = merge_flow_findings([*route_findings, *classified_checks])
     candidate = baseline_store.record_candidate(
         repo_id=repo_id,
         binding=binding,
         findings=check_findings,
         clean_worktree=_clean_worktree(repo),
-        evidence_complete=output_complete,
+        evidence_complete=output_complete and all(f.evidence_status == "complete" for f in all_findings),
         source="ci" if os.environ.get("CI") else "local",
     )
     promoted = None
@@ -544,10 +571,9 @@ def run_change_flow(
             "owner": route_request.get("owner", ""),
             "canonical_root": route_request.get("canonical_root", ""),
             "route": route.get("action", "review"),
-            "mutation_envelope": {
-                "allowed_write_paths": list(proposed_allowed),
-                "forbidden_write_paths": list(proposed_forbidden),
-            },
+            "mutation_envelope": build_authorization_mutation_envelope(
+                changed_paths, list(proposed_allowed), list(proposed_forbidden)
+            ),
         }
         authorization_store = AuthorizationManifestStore(runtime_root)
         authorization_request = authorization_store.create_request(context)
@@ -584,9 +610,13 @@ def run_change_flow(
         "incremental_summary": incremental_summary,
         "baseline": {
             "trusted": trusted is not None,
+            "comparison_available": comparison_baseline is not None,
             "candidate_snapshot_fingerprint": candidate["snapshot_fingerprint"],
             "promoted": promoted,
         },
+        "task_observation": task_observation,
+        "working_index": working_index,
+        "freshness_reconciliation": normalized["freshness_reconciliation"],
         "runtime_identity": runtime,
         "route_report": route,
         "checks": checks,

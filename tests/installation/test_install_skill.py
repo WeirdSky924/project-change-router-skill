@@ -78,8 +78,8 @@ def test_v040_release_metadata_preserves_reuse_api_and_versions_governance_apis(
     version = json.loads((SKILL_ROOT / "skill-version.json").read_text(encoding="utf-8"))
     project = tomllib.loads((SKILL_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
-    assert version["skill_version"] == "0.4.0"
-    assert project["project"]["version"] == "0.4.0"
+    assert version["skill_version"] == "0.5.0"
+    assert project["project"]["version"] == "0.5.0"
     assert version["reuse_engine_api_version"] == 2
     assert version["architecture_governance_api_version"] == 2
     assert version["typed_finding_schema_version"] == 1
@@ -194,7 +194,7 @@ def test_verify_only_rejects_v040_manifest_downgrade_and_subset_bypass(
     installed = codex_home / "skills" / "project-change-router"
     manifest_path = installed / INSTALL_MANIFEST
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    assert manifest["skill_version"] == "0.4.0"
+    assert manifest["skill_version"] == "0.5.0"
     assert manifest["architecture_governance_api_version"] == 2
     manifest["manifest_schema_version"] = 1
     manifest["files"] = {"SKILL.md": manifest["files"]["SKILL.md"]}
@@ -546,7 +546,7 @@ def test_atomic_install_supports_all_agent_homes(tmp_path: Path) -> None:
         manifest = json.loads(
             (installed / INSTALL_MANIFEST).read_text(encoding="utf-8")
         )
-        assert manifest["skill_version"] == "0.4.0"
+        assert manifest["skill_version"] == "0.5.0"
         assert manifest["manifest_schema_version"] == 3
         assert manifest["change_flow_api_version"] == 1
         for script in ("run_change_flow.py", "manage_authorization.py"):
@@ -572,7 +572,7 @@ def test_deepseek_harness_provider_loads_root_skill() -> None:
             encoding="utf-8"
         )
     )
-    assert package["version"] == "0.4.0"
+    assert package["version"] == "0.5.0"
     assert package["main"] == "./integrations/deepseek-harness/index.js"
     assert package["engines"]["node"] == "^22.19.0 || >=24.0.0"
     assert package["dsh"]["bundle"]["patch"] == (
