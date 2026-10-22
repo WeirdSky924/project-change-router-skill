@@ -12,14 +12,18 @@ Use this workflow whenever the user asks to:
 
 1. Identify the repository root.
 2. If `project-change-router/router-config.yaml` does not exist, bootstrap the bundle with `scripts/bootstrap_router.py` only when the user wants durable repository-local routing metadata.
-3. Prefer `scripts/run_change_flow.py` with the request text and known changed paths. It preserves legacy command behavior while providing the compact agent-facing orchestration path.
-4. Read `execution_gate` and the non-projectable safety envelope before interpreting advisory `action`.
-5. The flow resolves the route and aggregates `check_bundle_governance`, `check_index_freshness`, `check_deps`, `check_public_api`, `check_structure`, and `check_reuse`. It consumes the bundle's current evaluation policy/attestation as route evidence; run `validate_router_bundle.py` and `run_evaluation.py` separately when route metadata or evaluation truth changes.
-6. Normalize all gate-affecting evidence into schema-valid typed findings and deterministically reduce `execution_gate=pass|conditional|blocked` through one policy table.
-7. Read exact `must_read_targets`; inventory directory targets without blind full reads; execute unresolved structured queries before editing.
-8. If blocked, do not write product code. If conditional, run all required commands and stay inside the bounded envelope. If pass, still preserve the envelope.
-9. Use `action` only to guide reuse/extend/extract/new/review engineering analysis. It cannot override the gate.
-10. After changes, execute `post_change_closeout` and update the bundle only if the change created a capability or changed an owner, public boundary, lifecycle, or indexed structure.
+3. For a medium/thick or customer-flow change, first write the complete behavior closure and candidate write set: user action, visible state, backend/API/data result, readback, cleanup, boundary owners, and focused tests/fixtures. Package same-owner product, consumer seam, focused test, fixture, and required project metadata together when their source contract, risk, route intent, stop condition, and regression strategy are the same.
+4. Before adding a wrapper, lifecycle manager, namespace, or resource-control abstraction around an installed runtime, run a narrow probe against the real runtime/SDK/provider/launcher. Record the decisive signal/close, port, cancellation, ownership, and readback observations in route evidence; fake tests supplement but do not replace this probe.
+5. Prefer `scripts/run_change_flow.py` with the request text and known changed paths. It preserves legacy command behavior while providing the compact agent-facing orchestration path. Do not expand the closure into helper-by-helper packets or invoke a new route merely because another file was discovered.
+6. Read `execution_gate` and the non-projectable safety envelope before interpreting advisory `action`.
+7. The flow resolves the route and aggregates `check_bundle_governance`, `check_index_freshness`, `check_deps`, `check_public_api`, `check_structure`, and `check_reuse`. Consume this as one route/evidence package; reuse unchanged results and run a focused command only when its inputs changed or the gate requires it. It consumes the bundle's current evaluation policy/attestation as route evidence; run `validate_router_bundle.py` and `run_evaluation.py` separately when route metadata or evaluation truth changes.
+8. Normalize all gate-affecting evidence into schema-valid typed findings and deterministically reduce `execution_gate=pass|conditional|blocked` through one policy table.
+9. Read exact `must_read_targets`; inventory directory targets without blind full reads; execute unresolved structured queries before editing.
+10. If blocked, do not write product code. If conditional, run all required commands and stay inside the bounded envelope. If pass, still preserve the envelope.
+11. Use `action` only to guide reuse/extend/extract/new/review engineering analysis. It cannot override the gate.
+12. After changes, execute `post_change_closeout` and update the bundle only if the change created a capability or changed an owner, public boundary, lifecycle, or indexed structure.
+
+For each hard predecessor or route stop, record `unlocks=<specific acceptance step>`, `evidence=<decisive observation>`, and `next_acceptance=<immediate action>`. Once the evidence is complete, run `next_acceptance` in the same work block. Reroute only when owner, risk, authorization, paths, profile/index knowledge, source contract, or acceptance scope changes materially. Never turn advisory efficiency guidance into a gate bypass.
 
 For `check_reuse.py`, `result_status` and `completion_status` answer different questions. A non-failing result does not close the duplicate check when `completion_status` is `bounded`, `incomplete`, `timeout`, `cancelled`, or `error`. Read `summary.scan.scope` and continue targeted source analysis; never expand an unresolved changed path into an implicit repository-wide scan.
 

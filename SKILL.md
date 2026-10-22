@@ -60,6 +60,16 @@ Advisory direction layer:
 16. After a routed change, follow `post_change_closeout` and record feedback or evaluation regressions when review, override, delete, merge, or capability correction happened.
 17. For concrete route interpretation examples, read `examples/agent-workflows/README.md` before inventing behavior that is not described by the route report.
 
+## Bounded Route Planning And Contract Probes
+
+Before invoking the unified flow for a medium/thick change or a customer-flow change, define the complete behavior closure and candidate write set: user action, visible state, backend/API/data result, readback, cleanup, owners at each boundary, and the focused tests or fixtures that prove the closure. Keep a coherent same-owner product change, consumer seam, focused test, fixture, and required project metadata in one route package when they share the source contract, risk, route intent, stop condition, and regression strategy.
+
+Every hard predecessor or route stop must state `unlocks=<specific acceptance step>`, `evidence=<decisive observation>`, and `next_acceptance=<immediate action>`. Once the predecessor evidence is complete, perform that next acceptance action in the same work block. Do not extend preparation with general-purpose cleanup, namespace, dependency, or observability work unless a new observed failure changes the acceptance contract.
+
+Before adding a wrapper, lifecycle manager, namespace, or resource-control abstraction around an installed runtime, run a narrow probe against the real runtime/SDK/provider/launcher. Probe the semantics that can invalidate the design, including signal/close ordering, port allocation, cancellation, child ownership, and readback identity. Logic fakes remain useful for edge cases but cannot close a real runtime contract by themselves.
+
+`run_change_flow.py` remains the preferred unified entry. Consume its aggregated route and gate evidence as one package; do not replace it with helper-by-helper rerouting. Reuse a still-valid route or check result when its fingerprint and material inputs are unchanged, and run a focused check only when its input changed or the gate requires it. Reroute only for material changes to owner, risk, authorization, paths, profile/index knowledge, source contract, or acceptance scope. These efficiency rules never relax `execution_gate`, required reads, write envelopes, authorization, unknown-evidence handling, reuse completeness, or post-change closeout.
+
 ## Execution Modes
 
 - Unified read-only flow: use `scripts/run_change_flow.py`; it runs route plus governed checks, persists the full content-addressed artifact, and returns compact safety output by default
